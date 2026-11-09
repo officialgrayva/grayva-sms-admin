@@ -1,4 +1,4 @@
-export const DEFAULT_BASE_URL = 'https://school-nest-wgle.onrender.com/api/v1'
+export const DEFAULT_BASE_URL = 'https://grayva-sms-staging.onrender.com'
 
 // One function all API calls go through — attaches Bearer token and
 // X-Tenant-Subdomain automatically, and unwraps the {success, message, data}
