@@ -3,9 +3,11 @@
 // Single login form, no portal tabs. Adds pre-login 'register'
 // and 'forgot' views alongside 'login'. Role is resolved purely
 // from the decoded JWT after a single login call.
+// Session survives a page refresh: the refresh token is kept in
+// localStorage and exchanged for a new access token on startup.
 // ============================================================
 import React, { useState, useEffect } from 'react'
-import { DEFAULT_BASE_URL } from './api'
+import { DEFAULT_BASE_URL, apiFetch } from './api'
 import { decodeJwt } from './theme'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
@@ -33,10 +35,21 @@ import NotificationsPage from './pages/notifications/NotificationsPage'
 import { useRealtimeNotifications } from './hooks/useRealtimeNotifications'
 import Toast from './components/Toast'
 
-
 import SchoolsManagement from './pages/superadmin/SchoolsManagement'
 import PaymentsView from './pages/superadmin/PaymentsView'
 import AnnouncementsView from './pages/superadmin/AnnouncementsView'
+
+// ---------- session persistence (survives page refresh) ----------
+const SESSION_KEY = 'schoolnest_session'
+const loadSession = () => {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)) } catch { return null }
+}
+const saveSession = (s) => {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)) } catch { /* ignore */ }
+}
+const clearSession = () => {
+  try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+}
 
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
@@ -45,6 +58,7 @@ export default function App() {
   const [prefill, setPrefill] = useState(null) // { subdomain, identifier } after a fresh registration
   const [forgotSubdomain, setForgotSubdomain] = useState('')
   const [auth, setAuth] = useState(null)
+  const [booting, setBooting] = useState(true) // true while we check for a saved session
   const [activeSection, setActiveSection] = useState('dashboard')
   const [errorFilter, setErrorFilter] = useState({ schoolId: null, schoolName: null })
   const [unreadCount, setUnreadCount] = useState(0)
@@ -54,6 +68,12 @@ export default function App() {
 
   function handleLoggedIn(data, subdomain) {
     const decoded = decodeJwt(data.accessToken)
+    saveSession({
+      refreshToken: data.refreshToken,
+      subdomain,
+      user: data.user,
+      mustChangePassword: data.mustChangePassword,
+    })
     setAuth({
       token: data.accessToken,
       role: decoded?.role,
@@ -70,17 +90,58 @@ export default function App() {
   }
 
   function handlePasswordChanged() {
+    const saved = loadSession()
+    if (saved) saveSession({ ...saved, mustChangePassword: false })
     setAuth((prev) => ({ ...prev, mustChangePassword: false }))
   }
 
   function handleLogout() {
+    const saved = loadSession()
+    if (saved?.refreshToken && auth?.token) {
+      apiFetch(baseUrl, '/auth/logout', {
+        method: 'POST',
+        body: { refreshToken: saved.refreshToken },
+        token: auth.token,
+        subdomain: auth.subdomain,
+      }).catch(() => {})
+    }
+    clearSession()
     setAuth(null)
     setActiveSection('dashboard')
   }
 
   function handleAvatarUpdated(url) {
+    const saved = loadSession()
+    if (saved) saveSession({ ...saved, user: { ...saved.user, avatarUrl: url } })
     setAuth((prev) => ({ ...prev, user: { ...prev.user, avatarUrl: url } }))
   }
+
+  // Restore the session on page load
+  useEffect(() => {
+    const saved = loadSession()
+    if (!saved?.refreshToken) { setBooting(false); return }
+
+    apiFetch(baseUrl, '/auth/refresh', {
+      method: 'POST',
+      body: { refreshToken: saved.refreshToken },
+      subdomain: saved.subdomain,
+    })
+      .then((data) => {
+        const decoded = decodeJwt(data.accessToken)
+        saveSession({ ...saved, refreshToken: data.refreshToken }) // the backend issues a new one each time
+        setAuth({
+          token: data.accessToken,
+          role: decoded?.role,
+          schoolId: decoded?.schoolId,
+          subdomain: saved.subdomain,
+          mustChangePassword: saved.mustChangePassword,
+          user: saved.user,
+        })
+      })
+      .catch(() => clearSession()) // expired or logged out: fall through to the login page
+      .finally(() => setBooting(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (latestNotification) {
@@ -88,6 +149,10 @@ export default function App() {
       setActiveToast(latestNotification)
     }
   }, [latestNotification])
+
+  if (booting) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">Loading…</div>
+  }
 
   if (!auth) {
     if (preLoginView === 'register') {
