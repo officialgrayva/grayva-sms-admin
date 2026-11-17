@@ -44,7 +44,13 @@ export default function Subjects({ baseUrl, token, subdomain }) {
 
       setSubjects(subjectsData)
       setClasses(classesData)
-      setStaff(staffData.filter((s) => s.role === 'teacher'))
+
+      // Support both legacy and the new school-specific teaching roles.
+      setStaff(
+        staffData.filter((s) =>
+          ['teacher', 'classroom_teacher', 'subject_teacher'].includes(s.role)
+        )
+      )
     } catch (err) {
       setError(err.message || 'Unable to load subjects.')
     } finally {
@@ -157,11 +163,12 @@ export default function Subjects({ baseUrl, token, subdomain }) {
                     style={{ backgroundColor: COLORS.surface }}
                   >
                     <span style={{ color: COLORS.textPrimary }}>
-                      {m.class.name} {m.arm.name}
+                      {m.class?.name || 'Unknown class'}{' '}
+                      {m.arm?.name || '(All arms)'}
                     </span>
 
                     <span style={{ color: COLORS.textSecondary }}>
-                      · {m.teacher.fullName}
+                      · {m.teacher?.fullName || 'No teacher'}
                     </span>
 
                     <button
@@ -200,6 +207,7 @@ export default function Subjects({ baseUrl, token, subdomain }) {
 
       {showAssignModal && (
         <AssignModal
+          key={showAssignModal.id}
           baseUrl={baseUrl}
           opts={opts}
           subject={showAssignModal}
@@ -288,36 +296,43 @@ function SubjectModal({ baseUrl, opts, onClose, onSaved }) {
 }
 
 // ============================================================
-// EXPAND CLASS/ARM SELECTION INTO ASSIGNMENT PAIRS
+// BUILD ASSIGNMENT PAIRS
+// A null armId means the subject is assigned to the entire class.
 // ============================================================
 
 function resolvePairs(classId, armId, classes) {
   if (classId === ALL) {
-    return classes.flatMap((cls) =>
-      (cls.arms || []).map((arm) => ({
-        classId: cls.id,
-        armId: arm.id,
-      }))
-    )
+    return classes.map((cls) => ({
+      classId: cls.id,
+      armId: null,
+    }))
   }
 
   const selectedClass = classes.find((cls) => cls.id === classId)
 
   if (!selectedClass) return []
 
-  const arms = selectedClass.arms || []
-
+  // Entire class: no individual arm restriction.
   if (armId === ALL) {
-    return arms.map((arm) => ({
-      classId: selectedClass.id,
-      armId: arm.id,
-    }))
+    return [
+      {
+        classId: selectedClass.id,
+        armId: null,
+      },
+    ]
   }
 
-  const selectedArm = arms.find((arm) => arm.id === armId)
+  const selectedArm = (selectedClass.arms || []).find(
+    (arm) => arm.id === armId
+  )
 
   return selectedArm
-    ? [{ classId: selectedClass.id, armId: selectedArm.id }]
+    ? [
+        {
+          classId: selectedClass.id,
+          armId: selectedArm.id,
+        },
+      ]
     : []
 }
 
@@ -347,7 +362,7 @@ function AssignModal({
   onAssignAnother,
 }) {
   const [classId, setClassId] = useState('')
-  const [armId, setArmId] = useState('')
+  const [armId, setArmId] = useState(ALL)
   const [teacherId, setTeacherId] = useState('')
 
   const [loading, setLoading] = useState(false)
@@ -370,8 +385,8 @@ function AssignModal({
     if (pairs.length === 0) {
       setError(
         classId === ALL
-          ? 'No arms were found in any class. Create class arms before assigning subjects.'
-          : 'No matching class or arm was found.'
+          ? 'No classes were found.'
+          : 'Please select a valid class and assignment scope.'
       )
       return
     }
@@ -397,19 +412,15 @@ function AssignModal({
       })
 
       try {
-        await apiFetch(
-          baseUrl,
-          `/subjects/${subject.id}/assign`,
-          {
-            ...opts,
-            method: 'POST',
-            body: {
-              classId: pair.classId,
-              armId: pair.armId,
-              teacherId,
-            },
-          }
-        )
+        await apiFetch(baseUrl, `/subjects/${subject.id}/assign`, {
+          ...opts,
+          method: 'POST',
+          body: {
+            classId: pair.classId,
+            armId: pair.armId,
+            teacherId,
+          },
+        })
 
         assigned++
       } catch (err) {
@@ -446,8 +457,7 @@ function AssignModal({
       <Modal title="Assignment complete" onClose={onClose}>
         <div className="space-y-3 mb-5">
           <p className="text-sm" style={{ color: COLORS.textPrimary }}>
-            Assignment results for{' '}
-            <strong>{subject.name}</strong>
+            Assignment results for <strong>{subject.name}</strong>
           </p>
 
           <div
@@ -488,7 +498,8 @@ function AssignModal({
 
                 return (
                   <p key={index} className="text-xs mb-1">
-                    {cls?.name || 'Class'} {arm?.name || 'Arm'}: {failure.message}
+                    {cls?.name || 'Class'}{' '}
+                    {arm?.name || '(All arms)'}: {failure.message}
                   </p>
                 )
               })}
@@ -496,7 +507,7 @@ function AssignModal({
           )}
 
           <p className="text-xs" style={{ color: COLORS.textSecondary }}>
-            Processed {result.total} class-arm combination
+            Processed {result.total} class assignment
             {result.total !== 1 ? 's' : ''}.
           </p>
         </div>
@@ -517,7 +528,7 @@ function AssignModal({
   return (
     <Modal title={`Assign ${subject.name}`} onClose={closeModal}>
       <p className="text-xs mb-4" style={{ color: COLORS.textSecondary }}>
-        Select the class, arm and teacher for{' '}
+        Select the class, optional arm and teacher for{' '}
         <strong style={{ color: COLORS.textPrimary }}>
           {subject.name}
         </strong>.
@@ -531,7 +542,7 @@ function AssignModal({
             value={classId}
             onChange={(e) => {
               setClassId(e.target.value)
-              setArmId('')
+              setArmId(ALL)
               setError('')
             }}
             required
@@ -549,20 +560,17 @@ function AssignModal({
         </Field>
 
         {classId && classId !== ALL && (
-          <Field label="Arm">
+          <Field label="Arm (optional)">
             <Select
               value={armId}
               onChange={(e) => {
                 setArmId(e.target.value)
                 setError('')
               }}
-              required
               disabled={loading}
             >
-              <option value="">Select an arm…</option>
-
               <option value={ALL}>
-                All arms in {selectedClass?.name}
+                Entire class (all arms)
               </option>
 
               {(selectedClass?.arms || []).map((arm) => (
@@ -582,7 +590,8 @@ function AssignModal({
               color: COLORS.textSecondary,
             }}
           >
-            This will assign {subject.name} to every arm in every class.
+            This will assign {subject.name} to the entire class in every
+            available class, without restricting it to individual arms.
           </p>
         )}
 
