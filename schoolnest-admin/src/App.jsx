@@ -1,21 +1,17 @@
-// ============================================================
-// [SHARED ROOT] — UPDATED
-// Single login form, no portal tabs. Adds pre-login 'register'
-// and 'forgot' views alongside 'login'. Role is resolved purely
-// from the decoded JWT after a single login call.
-// Session survives a page refresh: the refresh token is kept in
-// localStorage and exchanged for a new access token on startup.
-// ============================================================
+
 import React, { useState, useEffect } from 'react'
 import { DEFAULT_BASE_URL, apiFetch } from './api'
 import { decodeJwt } from './theme'
+
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import LoginScreen from './components/LoginScreen'
 import RegisterSchoolScreen from './components/RegisterSchoolScreen'
 import ForgotPasswordFlow from './components/ForgotPasswordFlow'
+import VerifyEmailScreen from './components/VerifyEmailScreen'
 import ForcedPasswordChange from './components/ForcedPasswordChange'
 import SettingsModal from './components/SettingsModal'
+
 import DashboardHome from './pages/DashboardHome'
 import AcademicSetup from './pages/academic/AcademicSetup'
 import StaffList from './pages/staff/StaffList'
@@ -32,48 +28,80 @@ import SchoolProfile from './pages/settings/SchoolProfile'
 import WalletHome from './pages/wallet/WalletHome'
 import ErrorLogs from './pages/superadmin/ErrorLogs'
 import NotificationsPage from './pages/notifications/NotificationsPage'
-import { useRealtimeNotifications } from './hooks/useRealtimeNotifications'
-import Toast from './components/Toast'
-
 import SchoolsManagement from './pages/superadmin/SchoolsManagement'
 import PaymentsView from './pages/superadmin/PaymentsView'
 import AnnouncementsView from './pages/superadmin/AnnouncementsView'
 
-// ---------- session persistence (survives page refresh) ----------
+import { useRealtimeNotifications } from './hooks/useRealtimeNotifications'
+import Toast from './components/Toast'
+
+// ---------- session persistence ----------
 const SESSION_KEY = 'schoolnest_session'
+
 const loadSession = () => {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY)) } catch { return null }
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_KEY))
+  } catch {
+    return null
+  }
 }
-const saveSession = (s) => {
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)) } catch { /* ignore */ }
+
+const saveSession = (session) => {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+  } catch {
+    // Ignore storage errors.
+  }
 }
+
 const clearSession = () => {
-  try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(SESSION_KEY)
+  } catch {
+    // Ignore storage errors.
+  }
 }
 
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
   const [showSettings, setShowSettings] = useState(false)
-  const [preLoginView, setPreLoginView] = useState('login') // 'login' | 'register' | 'forgot'
-  const [prefill, setPrefill] = useState(null) // { subdomain, identifier } after a fresh registration
+
+  const [preLoginView, setPreLoginView] = useState(() => {
+    return window.location.pathname.replace(/\/+$/, '') === '/verify-email'
+      ? 'verify'
+      : 'login'
+  })
+
+  const [prefill, setPrefill] = useState(null)
+  const [verificationNotice, setVerificationNotice] = useState('')
   const [forgotSubdomain, setForgotSubdomain] = useState('')
+
   const [auth, setAuth] = useState(null)
-  const [booting, setBooting] = useState(true) // true while we check for a saved session
+  const [booting, setBooting] = useState(true)
+
   const [activeSection, setActiveSection] = useState('dashboard')
-  const [errorFilter, setErrorFilter] = useState({ schoolId: null, schoolName: null })
+  const [errorFilter, setErrorFilter] = useState({
+    schoolId: null,
+    schoolName: null,
+  })
   const [unreadCount, setUnreadCount] = useState(0)
   const [activeToast, setActiveToast] = useState(null)
 
-  const { latestNotification } = useRealtimeNotifications(baseUrl, auth?.token)
+  const { latestNotification } = useRealtimeNotifications(
+    baseUrl,
+    auth?.token
+  )
 
   function handleLoggedIn(data, subdomain) {
     const decoded = decodeJwt(data.accessToken)
+
     saveSession({
       refreshToken: data.refreshToken,
       subdomain,
       user: data.user,
       mustChangePassword: data.mustChangePassword,
     })
+
     setAuth({
       token: data.accessToken,
       role: decoded?.role,
@@ -82,21 +110,45 @@ export default function App() {
       mustChangePassword: data.mustChangePassword,
       user: data.user,
     })
+
+    setVerificationNotice('')
+    setPrefill(null)
   }
 
   function handleRegistered(info) {
-    setPrefill(info)
+    setPrefill({
+      subdomain: info.subdomain,
+      identifier: info.identifier,
+    })
+
+    setVerificationNotice(
+      info.verificationEmailQueued
+        ? 'Your school has been registered. We have sent a verification link to your email address. Please verify your email before signing in.'
+        : 'Your school has been registered, but we could not confirm that the verification email was queued. Please try signing in or request a new verification email.'
+    )
+
     setPreLoginView('login')
   }
 
   function handlePasswordChanged() {
     const saved = loadSession()
-    if (saved) saveSession({ ...saved, mustChangePassword: false })
-    setAuth((prev) => ({ ...prev, mustChangePassword: false }))
+
+    if (saved) {
+      saveSession({
+        ...saved,
+        mustChangePassword: false,
+      })
+    }
+
+    setAuth((previous) => ({
+      ...previous,
+      mustChangePassword: false,
+    }))
   }
 
   function handleLogout() {
     const saved = loadSession()
+
     if (saved?.refreshToken && auth?.token) {
       apiFetch(baseUrl, '/auth/logout', {
         method: 'POST',
@@ -105,6 +157,7 @@ export default function App() {
         subdomain: auth.subdomain,
       }).catch(() => {})
     }
+
     clearSession()
     setAuth(null)
     setActiveSection('dashboard')
@@ -112,14 +165,34 @@ export default function App() {
 
   function handleAvatarUpdated(url) {
     const saved = loadSession()
-    if (saved) saveSession({ ...saved, user: { ...saved.user, avatarUrl: url } })
-    setAuth((prev) => ({ ...prev, user: { ...prev.user, avatarUrl: url } }))
+
+    if (saved) {
+      saveSession({
+        ...saved,
+        user: {
+          ...saved.user,
+          avatarUrl: url,
+        },
+      })
+    }
+
+    setAuth((previous) => ({
+      ...previous,
+      user: {
+        ...previous.user,
+        avatarUrl: url,
+      },
+    }))
   }
 
-  // Restore the session on page load
+  // Restore the saved session on page load.
   useEffect(() => {
     const saved = loadSession()
-    if (!saved?.refreshToken) { setBooting(false); return }
+
+    if (!saved?.refreshToken) {
+      setBooting(false)
+      return
+    }
 
     apiFetch(baseUrl, '/auth/refresh', {
       method: 'POST',
@@ -128,7 +201,12 @@ export default function App() {
     })
       .then((data) => {
         const decoded = decodeJwt(data.accessToken)
-        saveSession({ ...saved, refreshToken: data.refreshToken }) // the backend issues a new one each time
+
+        saveSession({
+          ...saved,
+          refreshToken: data.refreshToken,
+        })
+
         setAuth({
           token: data.accessToken,
           role: decoded?.role,
@@ -138,51 +216,110 @@ export default function App() {
           user: saved.user,
         })
       })
-      .catch(() => clearSession()) // expired or logged out: fall through to the login page
+      .catch(() => clearSession())
       .finally(() => setBooting(false))
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (latestNotification) {
-      setUnreadCount((c) => c + 1)
+      setUnreadCount((count) => count + 1)
       setActiveToast(latestNotification)
     }
   }, [latestNotification])
 
   if (booting) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">Loading…</div>
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">
+        Loading…
+      </div>
+    )
+  }
+
+  // Public verification route. It must be accessible without logging in.
+  if (preLoginView === 'verify') {
+    return (
+      <VerifyEmailScreen
+        baseUrl={baseUrl}
+        onBackToLogin={() => {
+          window.history.replaceState({}, document.title, '/')
+          setPreLoginView('login')
+        }}
+      />
+    )
   }
 
   if (!auth) {
     if (preLoginView === 'register') {
-      return <RegisterSchoolScreen baseUrl={baseUrl} onBack={() => setPreLoginView('login')} onRegistered={handleRegistered} />
+      return (
+        <RegisterSchoolScreen
+          baseUrl={baseUrl}
+          onBack={() => setPreLoginView('login')}
+          onRegistered={handleRegistered}
+        />
+      )
     }
+
     if (preLoginView === 'forgot') {
-      return <ForgotPasswordFlow baseUrl={baseUrl} initialSubdomain={forgotSubdomain} onBack={() => setPreLoginView('login')} />
+      return (
+        <ForgotPasswordFlow
+          baseUrl={baseUrl}
+          initialSubdomain={forgotSubdomain}
+          onBack={() => setPreLoginView('login')}
+        />
+      )
     }
+
     return (
       <>
         <PrefilledLogin
           baseUrl={baseUrl}
           prefill={prefill}
+          verificationNotice={verificationNotice}
           onLoggedIn={handleLoggedIn}
           onOpenSettings={() => setShowSettings(true)}
           onGoToRegister={() => setPreLoginView('register')}
-          onGoToForgotPassword={(sd) => { setForgotSubdomain(sd); setPreLoginView('forgot') }}
+          onGoToForgotPassword={(subdomain) => {
+            setForgotSubdomain(subdomain)
+            setPreLoginView('forgot')
+          }}
         />
-        {showSettings && <SettingsModal baseUrl={baseUrl} onSave={setBaseUrl} onClose={() => setShowSettings(false)} />}
+
+        {showSettings && (
+          <SettingsModal
+            baseUrl={baseUrl}
+            onSave={setBaseUrl}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
       </>
     )
   }
 
   if (auth.mustChangePassword) {
-    return <ForcedPasswordChange baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} onDone={handlePasswordChanged} />
+    return (
+      <ForcedPasswordChange
+        baseUrl={baseUrl}
+        token={auth.token}
+        subdomain={auth.subdomain}
+        onDone={handlePasswordChanged}
+      />
+    )
   }
 
   return (
-     <div className="flex" style={{ backgroundColor: '#F5F6F8', minHeight: '100vh' }}>
-      <Sidebar role={auth.role} activeSection={activeSection} onNavigate={setActiveSection} onLogout={handleLogout} />
+    <div
+      className="flex"
+      style={{ backgroundColor: '#F5F6F8', minHeight: '100vh' }}
+    >
+      <Sidebar
+        role={auth.role}
+        activeSection={activeSection}
+        onNavigate={setActiveSection}
+        onLogout={handleLogout}
+      />
+
       <div className="flex-1">
         <Topbar
           activeSection={activeSection}
@@ -191,71 +328,215 @@ export default function App() {
           unreadCount={unreadCount}
           onOpenNotifications={() => setActiveSection('notifications')}
         />
+
         <main className="p-6">
-          {activeSection === 'dashboard' && <DashboardHome baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} role={auth.role} schoolId={auth.schoolId} onNavigate={setActiveSection} />}
-          {activeSection === 'academic' && <AcademicSetup baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'staff' && <StaffList baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'students' && <StudentsList baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'parents' && <ParentsList baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'scores' && <ScoresResults baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'attendance' && <AttendanceView baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'fees' && <FeesManagement baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'assessments' && <AssessmentsHome baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'events' && <EventsManagement baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'messaging' && <MessagingHome baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'billing' && <BillingHome baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
+          {activeSection === 'dashboard' && (
+            <DashboardHome
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+              role={auth.role}
+              schoolId={auth.schoolId}
+              onNavigate={setActiveSection}
+            />
+          )}
+
+          {activeSection === 'academic' && (
+            <AcademicSetup
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'staff' && (
+            <StaffList
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'students' && (
+            <StudentsList
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'parents' && (
+            <ParentsList
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'scores' && (
+            <ScoresResults
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'attendance' && (
+            <AttendanceView
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'fees' && (
+            <FeesManagement
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'assessments' && (
+            <AssessmentsHome
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'events' && (
+            <EventsManagement
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'messaging' && (
+            <MessagingHome
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'billing' && (
+            <BillingHome
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
           {activeSection === 'profile' && (
-            <SchoolProfile baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} schoolId={auth.schoolId}
-              avatarUrl={auth.user?.avatarUrl} onAvatarUpdated={handleAvatarUpdated} />
+            <SchoolProfile
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+              schoolId={auth.schoolId}
+              avatarUrl={auth.user?.avatarUrl}
+              onAvatarUpdated={handleAvatarUpdated}
+            />
           )}
+
           {activeSection === 'schools' && (
-            <SchoolsManagement baseUrl={baseUrl} token={auth.token}
-              onViewSchoolErrors={(id, name) => { setErrorFilter({ schoolId: id, schoolName: name }); setActiveSection('errors') }} />
+            <SchoolsManagement
+              baseUrl={baseUrl}
+              token={auth.token}
+              onViewSchoolErrors={(id, name) => {
+                setErrorFilter({
+                  schoolId: id,
+                  schoolName: name,
+                })
+                setActiveSection('errors')
+              }}
+            />
           )}
+
           {activeSection === 'errors' && (
-            <ErrorLogs baseUrl={baseUrl} token={auth.token}
-              initialSchoolId={errorFilter.schoolId} initialSchoolName={errorFilter.schoolName}
-              onClearSchoolFilter={() => setErrorFilter({ schoolId: null, schoolName: null })} />
+            <ErrorLogs
+              baseUrl={baseUrl}
+              token={auth.token}
+              initialSchoolId={errorFilter.schoolId}
+              initialSchoolName={errorFilter.schoolName}
+              onClearSchoolFilter={() =>
+                setErrorFilter({
+                  schoolId: null,
+                  schoolName: null,
+                })
+              }
+            />
           )}
+
           {activeSection === 'notifications' && (
-            <NotificationsPage baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} onUnreadCountChange={setUnreadCount} />
+            <NotificationsPage
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+              onUnreadCountChange={setUnreadCount}
+            />
           )}
-          {activeSection === 'payments' && <PaymentsView baseUrl={baseUrl} token={auth.token} />}
-          {activeSection === 'wallet' && <WalletHome baseUrl={baseUrl} token={auth.token} subdomain={auth.subdomain} />}
-          {activeSection === 'announcements' && <AnnouncementsView baseUrl={baseUrl} token={auth.token} />}
+
+          {activeSection === 'payments' && (
+            <PaymentsView baseUrl={baseUrl} token={auth.token} />
+          )}
+
+          {activeSection === 'wallet' && (
+            <WalletHome
+              baseUrl={baseUrl}
+              token={auth.token}
+              subdomain={auth.subdomain}
+            />
+          )}
+
+          {activeSection === 'announcements' && (
+            <AnnouncementsView baseUrl={baseUrl} token={auth.token} />
+          )}
         </main>
       </div>
+
       <Toast
         notification={activeToast}
         onClose={() => setActiveToast(null)}
-        onClick={() => { setActiveSection('notifications'); setActiveToast(null) }}
+        onClick={() => {
+          setActiveSection('notifications')
+          setActiveToast(null)
+        }}
       />
-      {showSettings && <SettingsModal baseUrl={baseUrl} onSave={setBaseUrl} onClose={() => setShowSettings(false)} />}
+
+      {showSettings && (
+        <SettingsModal
+          baseUrl={baseUrl}
+          onSave={setBaseUrl}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   )
 }
 
-// Small wrapper so LoginScreen doesn't need to know about the prefill mechanism itself
-function PrefilledLogin({ baseUrl, prefill, onLoggedIn, onOpenSettings, onGoToRegister, onGoToForgotPassword }) {
+// Small wrapper for the registration prefill and verification notice.
+function PrefilledLogin({
+  baseUrl,
+  prefill,
+  verificationNotice,
+  onLoggedIn,
+  onOpenSettings,
+  onGoToRegister,
+  onGoToForgotPassword,
+}) {
   return (
-    <LoginScreenWithPrefill
+    <LoginScreen
+      key={prefill?.subdomain || 'blank'}
       baseUrl={baseUrl}
-      prefill={prefill}
+      initialSubdomain={prefill?.subdomain}
+      initialIdentifier={prefill?.identifier}
+      verificationNotice={verificationNotice}
       onLoggedIn={onLoggedIn}
       onOpenSettings={onOpenSettings}
       onGoToRegister={onGoToRegister}
       onGoToForgotPassword={onGoToForgotPassword}
-    />
-  )
-}
-
-function LoginScreenWithPrefill(props) {
-  return (
-    <LoginScreen
-      key={props.prefill?.subdomain || 'blank'}
-      {...props}
-      initialSubdomain={props.prefill?.subdomain}
-      initialIdentifier={props.prefill?.identifier}
     />
   )
 }

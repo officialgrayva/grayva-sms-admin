@@ -1,13 +1,17 @@
-// ============================================================
-// [SCHOOL ADMIN PORTAL] — Subjects (UPDATED)
-// Adds bulk "All classes / All arms" assignment, and a proper
-// confirm modal instead of window.confirm.
-// ============================================================
+
 import React, { useState, useEffect } from 'react'
-import { Plus, BookOpen, Trash2 } from 'lucide-react'
+import { Plus, BookOpen, Trash2, Loader2 } from 'lucide-react'
 import { COLORS } from '../../theme'
 import { apiFetch } from '../../api'
-import { Button, Spinner, ErrorBanner, Field, Input, Select, EmptyState } from '../../components/ui'
+import {
+  Button,
+  Spinner,
+  ErrorBanner,
+  Field,
+  Input,
+  Select,
+  EmptyState,
+} from '../../components/ui'
 import Modal from '../../components/Modal'
 import ConfirmModal from '../../components/ConfirmModal'
 
@@ -15,35 +19,77 @@ const ALL = '__ALL__'
 
 export default function Subjects({ baseUrl, token, subdomain }) {
   const opts = { token, subdomain }
+
   const [subjects, setSubjects] = useState([])
   const [classes, setClasses] = useState([])
   const [staff, setStaff] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
   const [showSubjectModal, setShowSubjectModal] = useState(false)
   const [showAssignModal, setShowAssignModal] = useState(null)
   const [confirmRemove, setConfirmRemove] = useState(null)
+  const [removingId, setRemovingId] = useState(null)
 
-  async function load() {
-    setLoading(true); setError('')
+  async function load(showLoader = true) {
+    if (showLoader) setLoading(true)
+    setError('')
+
     try {
       const [subjectsData, classesData, staffData] = await Promise.all([
         apiFetch(baseUrl, '/subjects', opts),
         apiFetch(baseUrl, '/classes', opts),
         apiFetch(baseUrl, '/staff', opts),
       ])
-      setSubjects(subjectsData); setClasses(classesData)
+
+      setSubjects(subjectsData)
+      setClasses(classesData)
       setStaff(staffData.filter((s) => s.role === 'teacher'))
-    } catch (err) { setError(err.message) } finally { setLoading(false) }
+    } catch (err) {
+      setError(err.message || 'Unable to load subjects.')
+    } finally {
+      if (showLoader) setLoading(false)
+    }
   }
 
-  useEffect(() => { load() }, [baseUrl, token, subdomain])
+  useEffect(() => {
+    load()
+  }, [baseUrl, token, subdomain])
 
   async function confirmRemoveNow() {
     const id = confirmRemove
-    setConfirmRemove(null)
-    try { await apiFetch(baseUrl, `/subject-mappings/${id}`, { ...opts, method: 'DELETE' }); await load() }
-    catch (err) { setError(err.message) }
+    if (!id || removingId) return
+
+    setRemovingId(id)
+    setError('')
+
+    try {
+      await apiFetch(baseUrl, `/subject-mappings/${id}`, {
+        ...opts,
+        method: 'DELETE',
+      })
+
+      setConfirmRemove(null)
+      await load(false)
+    } catch (err) {
+      setError(err.message || 'Unable to remove this subject assignment.')
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
+  function openNextSubject(currentSubject) {
+    const currentIndex = subjects.findIndex(
+      (subject) => subject.id === currentSubject.id
+    )
+
+    const nextSubject = subjects[currentIndex + 1]
+
+    if (nextSubject) {
+      setShowAssignModal(nextSubject)
+    } else {
+      setShowAssignModal(null)
+    }
   }
 
   if (loading) return <Spinner label="Loading subjects…" />
@@ -51,29 +97,90 @@ export default function Subjects({ baseUrl, token, subdomain }) {
   return (
     <div>
       <ErrorBanner message={error} />
+
       <div className="flex justify-end mb-4">
-        <Button onClick={() => setShowSubjectModal(true)}><Plus size={15} /> New Subject</Button>
+        <Button onClick={() => setShowSubjectModal(true)}>
+          <Plus size={15} /> New Subject
+        </Button>
       </div>
 
-      {subjects.length === 0 && <EmptyState icon={BookOpen} title="No subjects yet" sub="Add your first subject, e.g. Mathematics." />}
+      {subjects.length === 0 && (
+        <EmptyState
+          icon={BookOpen}
+          title="No subjects yet"
+          sub="Add your first subject, e.g. Mathematics."
+        />
+      )}
 
       <div className="space-y-3">
         {subjects.map((s) => (
-          <div key={s.id} className="bg-white rounded" style={{ border: `1px solid ${COLORS.border}` }}>
-            <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-              <span className="text-sm font-semibold" style={{ color: COLORS.textPrimary }}>{s.name}</span>
-              <Button size="sm" variant="ghost" onClick={() => setShowAssignModal(s.id)}><Plus size={13} /> Assign to class</Button>
+          <div
+            key={s.id}
+            className="bg-white rounded"
+            style={{ border: `1px solid ${COLORS.border}` }}
+          >
+            <div
+              className="px-5 py-3.5 flex items-center justify-between"
+              style={{ borderBottom: `1px solid ${COLORS.border}` }}
+            >
+              <span
+                className="text-sm font-semibold"
+                style={{ color: COLORS.textPrimary }}
+              >
+                {s.name}
+              </span>
+
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowAssignModal(s)}
+              >
+                <Plus size={13} /> Assign to class
+              </Button>
             </div>
+
             <div className="p-4">
               {(!s.subjectMappings || s.subjectMappings.length === 0) && (
-                <span className="text-xs" style={{ color: COLORS.textSecondary }}>Not assigned to any class yet.</span>
+                <span
+                  className="text-xs"
+                  style={{ color: COLORS.textSecondary }}
+                >
+                  Not assigned to any class yet.
+                </span>
               )}
+
               <div className="flex flex-wrap gap-2">
                 {s.subjectMappings?.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2 px-3 py-1.5 rounded text-xs" style={{ backgroundColor: COLORS.surface }}>
-                    <span style={{ color: COLORS.textPrimary }}>{m.class.name} {m.arm.name}</span>
-                    <span style={{ color: COLORS.textSecondary }}>· {m.teacher.fullName}</span>
-                    <button onClick={() => setConfirmRemove(m.id)}><Trash2 size={12} style={{ color: COLORS.red }} /></button>
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded text-xs"
+                    style={{ backgroundColor: COLORS.surface }}
+                  >
+                    <span style={{ color: COLORS.textPrimary }}>
+                      {m.class.name} {m.arm.name}
+                    </span>
+
+                    <span style={{ color: COLORS.textSecondary }}>
+                      · {m.teacher.fullName}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={removingId === m.id}
+                      onClick={() => setConfirmRemove(m.id)}
+                      className="disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Remove assignment"
+                    >
+                      {removingId === m.id ? (
+                        <Loader2
+                          size={12}
+                          className="animate-spin"
+                          style={{ color: COLORS.red }}
+                        />
+                      ) : (
+                        <Trash2 size={12} style={{ color: COLORS.red }} />
+                      )}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -82,18 +189,47 @@ export default function Subjects({ baseUrl, token, subdomain }) {
         ))}
       </div>
 
-      {showSubjectModal && <SubjectModal baseUrl={baseUrl} opts={opts} onClose={() => setShowSubjectModal(false)} onSaved={load} />}
-      {showAssignModal && (
-        <AssignModal baseUrl={baseUrl} opts={opts} subjectId={showAssignModal} classes={classes} staff={staff}
-          onClose={() => setShowAssignModal(null)} onSaved={load} />
+      {showSubjectModal && (
+        <SubjectModal
+          baseUrl={baseUrl}
+          opts={opts}
+          onClose={() => setShowSubjectModal(false)}
+          onSaved={() => load(false)}
+        />
       )}
+
+      {showAssignModal && (
+        <AssignModal
+          baseUrl={baseUrl}
+          opts={opts}
+          subject={showAssignModal}
+          classes={classes}
+          staff={staff}
+          onClose={() => setShowAssignModal(null)}
+          onSaved={() => load(false)}
+          onAssignAnother={() => openNextSubject(showAssignModal)}
+        />
+      )}
+
       {confirmRemove && (
-        <ConfirmModal title="Remove subject from class" message="Teachers will lose access to enter scores for this subject in this class." confirmLabel="Remove" tone="red"
-          onCancel={() => setConfirmRemove(null)} onConfirm={confirmRemoveNow} />
+        <ConfirmModal
+          title="Remove subject from class"
+          message="Teachers will lose access to enter scores for this subject in this class."
+          confirmLabel="Remove"
+          tone="red"
+          onCancel={() => {
+            if (!removingId) setConfirmRemove(null)
+          }}
+          onConfirm={confirmRemoveNow}
+        />
       )}
     </div>
   )
 }
+
+// ============================================================
+// CREATE SUBJECT
+// ============================================================
 
 function SubjectModal({ baseUrl, opts, onClose, onSaved }) {
   const [name, setName] = useState('')
@@ -102,104 +238,410 @@ function SubjectModal({ baseUrl, opts, onClose, onSaved }) {
 
   async function submit(e) {
     e.preventDefault()
-    setLoading(true); setError('')
-    try { await apiFetch(baseUrl, '/subjects', { ...opts, method: 'POST', body: { name } }); onSaved(); onClose() }
-    catch (err) { setError(err.message) } finally { setLoading(false) }
+    if (loading) return
+
+    setLoading(true)
+    setError('')
+
+    try {
+      await apiFetch(baseUrl, '/subjects', {
+        ...opts,
+        method: 'POST',
+        body: { name: name.trim() },
+      })
+
+      await onSaved()
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Unable to create subject.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <Modal title="New subject" onClose={onClose}>
+    <Modal
+      title="New subject"
+      onClose={() => {
+        if (!loading) onClose()
+      }}
+    >
       <ErrorBanner message={error} />
+
       <form onSubmit={submit}>
-        <Field label="Subject name"><Input placeholder="e.g. Mathematics" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
-        <Button type="submit" full loading={loading}>Create subject</Button>
+        <Field label="Subject name">
+          <Input
+            placeholder="e.g. Mathematics"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            disabled={loading}
+          />
+        </Field>
+
+        <Button type="submit" full loading={loading} disabled={!name.trim()}>
+          Create subject
+        </Button>
       </form>
     </Modal>
   )
 }
 
-// Expands the class/arm selection — including "All classes" and "All arms
-// in this class" — into the full list of {classId, armId} pairs to assign.
+// ============================================================
+// EXPAND CLASS/ARM SELECTION INTO ASSIGNMENT PAIRS
+// ============================================================
+
 function resolvePairs(classId, armId, classes) {
   if (classId === ALL) {
-    return classes.flatMap((c) => c.arms.map((a) => ({ classId: c.id, armId: a.id })))
+    return classes.flatMap((cls) =>
+      (cls.arms || []).map((arm) => ({
+        classId: cls.id,
+        armId: arm.id,
+      }))
+    )
   }
-  const cls = classes.find((c) => c.id === classId)
-  if (!cls) return []
-  if (armId === ALL) return cls.arms.map((a) => ({ classId: cls.id, armId: a.id }))
-  const arm = cls.arms.find((a) => a.id === armId)
-  return arm ? [{ classId: cls.id, armId: arm.id }] : []
+
+  const selectedClass = classes.find((cls) => cls.id === classId)
+
+  if (!selectedClass) return []
+
+  const arms = selectedClass.arms || []
+
+  if (armId === ALL) {
+    return arms.map((arm) => ({
+      classId: selectedClass.id,
+      armId: arm.id,
+    }))
+  }
+
+  const selectedArm = arms.find((arm) => arm.id === armId)
+
+  return selectedArm
+    ? [{ classId: selectedClass.id, armId: selectedArm.id }]
+    : []
 }
 
-function AssignModal({ baseUrl, opts, subjectId, classes, staff, onClose, onSaved }) {
+function isDuplicateAssignment(err) {
+  const message = (err?.message || '').toLowerCase()
+
+  return (
+    message.includes('already mapped') ||
+    message.includes('already assigned') ||
+    message.includes('duplicate') ||
+    message.includes('409')
+  )
+}
+
+// ============================================================
+// ASSIGN SUBJECT
+// ============================================================
+
+function AssignModal({
+  baseUrl,
+  opts,
+  subject,
+  classes,
+  staff,
+  onClose,
+  onSaved,
+  onAssignAnother,
+}) {
   const [classId, setClassId] = useState('')
   const [armId, setArmId] = useState('')
   const [teacherId, setTeacherId] = useState('')
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
-  const selectedClass = classes.find((c) => c.id === classId)
+  const [progress, setProgress] = useState({ current: 0, total: 0 })
+
+  const selectedClass = classes.find((cls) => cls.id === classId)
 
   async function submit(e) {
     e.preventDefault()
-    setLoading(true); setError(''); setResult(null)
-    const pairs = resolvePairs(classId, armId, classes)
-    if (pairs.length === 0) { setError('No matching classes/arms found.'); setLoading(false); return }
 
-    let assigned = 0, skipped = 0
-    for (const pair of pairs) {
-      try {
-        await apiFetch(baseUrl, `/subjects/${subjectId}/assign`, { ...opts, method: 'POST', body: { classId: pair.classId, armId: pair.armId, teacherId } })
-        assigned++
-      } catch { skipped++ } // most commonly "already assigned" — skip rather than abort the batch
+    if (loading) return
+
+    setError('')
+    setResult(null)
+
+    const pairs = resolvePairs(classId, armId, classes)
+
+    if (pairs.length === 0) {
+      setError(
+        classId === ALL
+          ? 'No arms were found in any class. Create class arms before assigning subjects.'
+          : 'No matching class or arm was found.'
+      )
+      return
     }
-    setResult({ assigned, skipped })
+
+    if (!teacherId) {
+      setError('Please select a teacher.')
+      return
+    }
+
+    setLoading(true)
+    setProgress({ current: 0, total: pairs.length })
+
+    let assigned = 0
+    let skipped = 0
+    const failures = []
+
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i]
+
+      setProgress({
+        current: i + 1,
+        total: pairs.length,
+      })
+
+      try {
+        await apiFetch(
+          baseUrl,
+          `/subjects/${subject.id}/assign`,
+          {
+            ...opts,
+            method: 'POST',
+            body: {
+              classId: pair.classId,
+              armId: pair.armId,
+              teacherId,
+            },
+          }
+        )
+
+        assigned++
+      } catch (err) {
+        if (isDuplicateAssignment(err)) {
+          skipped++
+        } else {
+          failures.push({
+            classId: pair.classId,
+            armId: pair.armId,
+            message: err.message || 'Unknown assignment error',
+          })
+        }
+      }
+    }
+
+    await onSaved()
+
+    setResult({
+      assigned,
+      skipped,
+      failures,
+      total: pairs.length,
+    })
+
     setLoading(false)
-    onSaved()
+  }
+
+  const closeModal = () => {
+    if (!loading) onClose()
   }
 
   if (result) {
     return (
       <Modal title="Assignment complete" onClose={onClose}>
-        <p className="text-sm mb-4" style={{ color: COLORS.textSecondary }}>
-          Assigned to <strong style={{ color: COLORS.green }}>{result.assigned}</strong> class-arm{result.assigned !== 1 ? 's' : ''}.
-          {result.skipped > 0 && <> {result.skipped} were skipped (already assigned).</>}
-        </p>
-        <Button full onClick={onClose}>Done</Button>
+        <div className="space-y-3 mb-5">
+          <p className="text-sm" style={{ color: COLORS.textPrimary }}>
+            Assignment results for{' '}
+            <strong>{subject.name}</strong>
+          </p>
+
+          <div
+            className="rounded p-3 text-sm"
+            style={{ backgroundColor: '#E8F5EE', color: COLORS.green }}
+          >
+            Successfully assigned: <strong>{result.assigned}</strong>
+          </div>
+
+          {result.skipped > 0 && (
+            <div
+              className="rounded p-3 text-sm"
+              style={{ backgroundColor: '#FBF1E1', color: COLORS.amber }}
+            >
+              Already assigned: <strong>{result.skipped}</strong>
+            </div>
+          )}
+
+          {result.failures.length > 0 && (
+            <div
+              className="rounded p-3 text-sm"
+              style={{
+                backgroundColor: '#FBEAEA',
+                color: COLORS.red,
+              }}
+            >
+              <p className="font-semibold mb-2">
+                Failed assignments: {result.failures.length}
+              </p>
+
+              {result.failures.map((failure, index) => {
+                const cls = classes.find(
+                  (item) => item.id === failure.classId
+                )
+                const arm = cls?.arms?.find(
+                  (item) => item.id === failure.armId
+                )
+
+                return (
+                  <p key={index} className="text-xs mb-1">
+                    {cls?.name || 'Class'} {arm?.name || 'Arm'}: {failure.message}
+                  </p>
+                )
+              })}
+            </div>
+          )}
+
+          <p className="text-xs" style={{ color: COLORS.textSecondary }}>
+            Processed {result.total} class-arm combination
+            {result.total !== 1 ? 's' : ''}.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Button full onClick={onAssignAnother}>
+            <Plus size={15} /> Assign another subject
+          </Button>
+
+          <Button variant="ghost" full onClick={onClose}>
+            Done
+          </Button>
+        </div>
       </Modal>
     )
   }
 
   return (
-    <Modal title="Assign subject to class" onClose={onClose}>
+    <Modal title={`Assign ${subject.name}`} onClose={closeModal}>
+      <p className="text-xs mb-4" style={{ color: COLORS.textSecondary }}>
+        Select the class, arm and teacher for{' '}
+        <strong style={{ color: COLORS.textPrimary }}>
+          {subject.name}
+        </strong>.
+      </p>
+
       <ErrorBanner message={error} />
+
       <form onSubmit={submit}>
         <Field label="Class">
-          <Select value={classId} onChange={(e) => { setClassId(e.target.value); setArmId('') }} required>
+          <Select
+            value={classId}
+            onChange={(e) => {
+              setClassId(e.target.value)
+              setArmId('')
+              setError('')
+            }}
+            required
+            disabled={loading}
+          >
             <option value="">Select a class…</option>
             <option value={ALL}>All classes</option>
-            {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+
+            {classes.map((cls) => (
+              <option key={cls.id} value={cls.id}>
+                {cls.name}
+              </option>
+            ))}
           </Select>
         </Field>
+
         {classId && classId !== ALL && (
           <Field label="Arm">
-            <Select value={armId} onChange={(e) => setArmId(e.target.value)} required>
+            <Select
+              value={armId}
+              onChange={(e) => {
+                setArmId(e.target.value)
+                setError('')
+              }}
+              required
+              disabled={loading}
+            >
               <option value="">Select an arm…</option>
-              <option value={ALL}>All arms in {selectedClass?.name}</option>
-              {selectedClass?.arms.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+
+              <option value={ALL}>
+                All arms in {selectedClass?.name}
+              </option>
+
+              {(selectedClass?.arms || []).map((arm) => (
+                <option key={arm.id} value={arm.id}>
+                  {arm.name}
+                </option>
+              ))}
             </Select>
           </Field>
         )}
+
         {classId === ALL && (
-          <p className="text-xs mb-4" style={{ color: COLORS.textSecondary }}>This assigns the subject to every arm in every class in the school.</p>
+          <p
+            className="text-xs mb-4 rounded p-3"
+            style={{
+              backgroundColor: COLORS.surface,
+              color: COLORS.textSecondary,
+            }}
+          >
+            This will assign {subject.name} to every arm in every class.
+          </p>
         )}
+
         <Field label="Teacher">
-          <Select value={teacherId} onChange={(e) => setTeacherId(e.target.value)} required>
+          <Select
+            value={teacherId}
+            onChange={(e) => setTeacherId(e.target.value)}
+            required
+            disabled={loading}
+          >
             <option value="">Select a teacher…</option>
-            {staff.map((t) => <option key={t.id} value={t.id}>{t.fullName}</option>)}
+
+            {staff.map((teacher) => (
+              <option key={teacher.id} value={teacher.id}>
+                {teacher.fullName}
+              </option>
+            ))}
           </Select>
         </Field>
-        <Button type="submit" full loading={loading}>Assign</Button>
+
+        {loading && (
+          <div className="mb-4">
+            <div className="flex justify-between text-xs mb-2">
+              <span style={{ color: COLORS.textSecondary }}>
+                Assigning subject…
+              </span>
+
+              <span style={{ color: COLORS.textPrimary }}>
+                {progress.current} / {progress.total}
+              </span>
+            </div>
+
+            <div
+              className="h-2 rounded overflow-hidden"
+              style={{ backgroundColor: COLORS.surface }}
+            >
+              <div
+                className="h-full rounded transition-all duration-200"
+                style={{
+                  width: `${
+                    progress.total
+                      ? (progress.current / progress.total) * 100
+                      : 0
+                  }%`,
+                  backgroundColor: COLORS.green,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        <Button
+          type="submit"
+          full
+          loading={loading}
+          disabled={loading || !classId || !teacherId}
+        >
+          {loading ? 'Assigning…' : 'Assign subject'}
+        </Button>
       </form>
     </Modal>
   )
