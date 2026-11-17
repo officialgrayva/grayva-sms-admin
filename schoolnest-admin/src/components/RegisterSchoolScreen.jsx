@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react'
-import { ArrowLeft, Check, X as XIcon, Gift, Mail } from 'lucide-react'
+import { ArrowLeft, Check, X as XIcon, Gift } from 'lucide-react'
 import { COLORS } from '../theme'
 import { apiFetch } from '../api'
 import { Button, ErrorBanner, Field, Input } from './ui'
@@ -12,6 +12,7 @@ export default function RegisterSchoolScreen({
 }) {
   const [form, setForm] = useState({
     name: '',
+    schoolType: '',
     email: '',
     phone: '',
     address: '',
@@ -76,6 +77,11 @@ export default function RegisterSchoolScreen({
 
     if (loading) return
 
+    if (!form.schoolType) {
+      setError('Please select your school type.')
+      return
+    }
+
     if (availability !== 'available') {
       setError(
         availability === 'taken'
@@ -92,6 +98,7 @@ export default function RegisterSchoolScreen({
       const body = {
         ...form,
         name: form.name.trim(),
+        schoolType: form.schoolType,
         email: form.email.trim().toLowerCase(),
         subdomain: form.subdomain.trim().toLowerCase(),
         adminFullName: form.adminFullName.trim(),
@@ -160,6 +167,26 @@ export default function RegisterSchoolScreen({
                 required
                 disabled={loading}
               />
+            </Field>
+
+            <Field label="School type">
+              <select
+                value={form.schoolType}
+                onChange={(e) => set('schoolType', e.target.value)}
+                required
+                disabled={loading}
+                className="w-full rounded-md border px-3 py-2 text-sm outline-none"
+                style={{
+                  borderColor: COLORS.border,
+                  color: COLORS.textPrimary,
+                  backgroundColor: '#FFFFFF',
+                }}
+              >
+                <option value="">Select school type</option>
+                <option value="primary">Primary school</option>
+                <option value="secondary">Secondary school</option>
+                <option value="both">Both primary and secondary</option>
+              </select>
             </Field>
 
             <Field label="School subdomain">
